@@ -1,0 +1,12 @@
+* owl
+
+Open Wayland Library - a compositor library that makes building Wayland window managers as simple as xlib made it for X11.
+
+** Status
+
+Early development. The API is defined but the implementation is skeletal.
+
+** Goal
+
+Clone this repo, call a few functions, start writing window manager logic. Eventually this can be something that would be adopted for a baseline of wayland window managers, but with proper compliance that can be similar to the EWMH of x11. 
+
