@@ -1,6 +1,6 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -std=c11 -I include $(shell pkg-config --cflags wayland-server)
-LDFLAGS = $(shell pkg-config --libs wayland-server)
+CFLAGS = -Wall -Wextra -std=c11 -I include -I src $(shell pkg-config --cflags wayland-server libdrm gbm egl libinput libudev xkbcommon)
+LDFLAGS = $(shell pkg-config --libs wayland-server libdrm gbm egl glesv2 libinput libudev xkbcommon)
 
 SRC_DIR = src
 OBJ_DIR = build
@@ -29,6 +29,12 @@ $(LIB_DIR):
 
 examples: $(LIBRARY)
 	$(CC) $(CFLAGS) examples/simple_wm.c -L$(LIB_DIR) -lowl $(LDFLAGS) -o examples/simple_wm
+
+run: examples
+	./examples/simple_wm
+
+runlog: examples
+	./examples/simple_wm > /tmp/owl.log 2>&1; cat /tmp/owl.log
 
 clean:
 	rm -rf $(OBJ_DIR) $(LIB_DIR) examples/simple_wm

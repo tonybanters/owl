@@ -19,12 +19,27 @@ static void on_window_destroy(Owl_Display* display, Owl_Window* window, void* da
 static void on_key_press(Owl_Display* display, Owl_Input* input, void* data) {
     (void)data;
 
+    uint32_t keycode = owl_input_get_keycode(input);
     uint32_t keysym = owl_input_get_keysym(input);
     uint32_t mods = owl_input_get_modifiers(input);
 
+    printf("key press: keycode=%u keysym=0x%x mods=0x%x\n", keycode, keysym, mods);
+    fflush(stdout);
+
     if ((mods & OWL_MOD_SUPER) && keysym == 0xff1b) {
+        printf("Super+Escape pressed, terminating\n");
         owl_display_terminate(display);
     }
+}
+
+static void on_output_connect(Owl_Display* display, Owl_Output* output, void* data) {
+    (void)display;
+    (void)data;
+
+    printf("output connected: %s (%dx%d)\n",
+           owl_output_get_name(output),
+           owl_output_get_width(output),
+           owl_output_get_height(output));
 }
 
 static void tile_windows(Owl_Display* display) {
@@ -76,8 +91,9 @@ int main(void) {
     owl_set_window_callback(display, OWL_WINDOW_EVENT_CREATE, on_window_create, NULL);
     owl_set_window_callback(display, OWL_WINDOW_EVENT_DESTROY, on_window_destroy, NULL);
     owl_set_input_callback(display, OWL_INPUT_KEY_PRESS, on_key_press, NULL);
+    owl_set_output_callback(display, OWL_OUTPUT_EVENT_CONNECT, on_output_connect, NULL);
 
-    printf("simple_wm: starting\n");
+    printf("simple_wm: starting (press Super+Escape to quit)\n");
     owl_display_run(display);
 
     owl_display_destroy(display);

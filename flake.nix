@@ -27,11 +27,17 @@
           libdrm
           libinput
           libxkbcommon
-          udev
+          systemdLibs
 
           libGL
           mesa
+          libgbm
           pixman
+          linuxHeaders
+        ];
+
+        nativeBuildInputs = with pkgs; [
+          pkg-config
         ];
 
         shellHook = ''

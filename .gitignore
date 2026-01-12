@@ -1,4 +1,5 @@
 build/
+.cache/
 lib/
 notes/
 compile_commands.json
