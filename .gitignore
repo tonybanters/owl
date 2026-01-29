@@ -3,3 +3,5 @@ build/
 lib/
 notes/
 compile_commands.json
+protocols/*-protocol.h
+protocols/*-protocol.c

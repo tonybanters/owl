@@ -30,9 +30,59 @@ struct Owl_Output {
     bool page_flip_pending;
 };
 
+typedef struct Owl_Shm_Pool {
+    struct Owl_Display* display;
+    struct wl_resource* resource;
+    int fd;
+    void* data;
+    int32_t size;
+    int ref_count;
+} Owl_Shm_Pool;
+
+typedef struct Owl_Shm_Buffer {
+    struct wl_resource* resource;
+    Owl_Shm_Pool* pool;
+    int32_t offset;
+    int32_t width;
+    int32_t height;
+    int32_t stride;
+    uint32_t format;
+    bool busy;
+} Owl_Shm_Buffer;
+
+typedef struct Owl_Surface_State {
+    Owl_Shm_Buffer* buffer;
+    int32_t buffer_x;
+    int32_t buffer_y;
+    bool buffer_attached;
+    struct wl_list frame_callbacks;
+    int32_t damage_x;
+    int32_t damage_y;
+    int32_t damage_width;
+    int32_t damage_height;
+    bool has_damage;
+} Owl_Surface_State;
+
+typedef struct Owl_Surface {
+    struct Owl_Display* display;
+    struct wl_resource* resource;
+    Owl_Surface_State pending;
+    Owl_Surface_State current;
+    uint32_t texture_id;
+    int32_t texture_width;
+    int32_t texture_height;
+    bool has_content;
+    struct wl_list link;
+} Owl_Surface;
+
+typedef struct Owl_Frame_Callback {
+    struct wl_resource* resource;
+    struct wl_list link;
+} Owl_Frame_Callback;
+
 struct Owl_Window {
     struct Owl_Display* display;
-    struct wl_resource* surface_resource;
+    Owl_Surface* surface;
     struct wl_resource* xdg_surface_resource;
     struct wl_resource* xdg_toplevel_resource;
     int pos_x;
@@ -44,6 +94,8 @@ struct Owl_Window {
     bool fullscreen;
     bool focused;
     bool mapped;
+    uint32_t pending_serial;
+    bool pending_configure;
     struct wl_list link;
 };
 
@@ -96,6 +148,11 @@ struct Owl_Display {
     struct wl_list windows;
     int window_count;
 
+    struct wl_list surfaces;
+    int surface_count;
+    struct wl_global* compositor_global;
+    struct wl_global* shm_global;
+
     Window_Callback_Entry window_callbacks[8][OWL_MAX_CALLBACKS];
     int window_callback_count[8];
 
@@ -124,5 +181,19 @@ void owl_render_frame(Owl_Display* display, Owl_Output* output);
 void owl_invoke_window_callback(Owl_Display* display, Owl_Window_Event type, Owl_Window* window);
 void owl_invoke_input_callback(Owl_Display* display, Owl_Input_Event type, Owl_Input* input);
 void owl_invoke_output_callback(Owl_Display* display, Owl_Output_Event type, Owl_Output* output);
+
+void owl_surface_init(Owl_Display* display);
+void owl_surface_cleanup(Owl_Display* display);
+Owl_Surface* owl_surface_from_resource(struct wl_resource* resource);
+void owl_surface_send_frame_done(Owl_Display* display, uint32_t time);
+
+void owl_xdg_shell_init(Owl_Display* display);
+void owl_xdg_shell_cleanup(Owl_Display* display);
+void owl_xdg_toplevel_send_configure(Owl_Window* window, int width, int height);
+void owl_xdg_toplevel_send_close(Owl_Window* window);
+void owl_window_map(Owl_Window* window);
+
+uint32_t owl_render_upload_texture(Owl_Display* display, Owl_Surface* surface);
+void owl_render_surface(Owl_Display* display, Owl_Surface* surface, int x, int y);
 
 #endif

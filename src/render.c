@@ -1,11 +1,120 @@
+#define _GNU_SOURCE
 #include "internal.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <string.h>
+#include <time.h>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 #include <gbm.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
+#include <wayland-server-protocol.h>
+
+static const char* vertex_shader_source =
+    "attribute vec2 position;\n"
+    "attribute vec2 texcoord;\n"
+    "varying vec2 v_texcoord;\n"
+    "uniform vec2 screen_size;\n"
+    "uniform vec2 surface_pos;\n"
+    "uniform vec2 surface_size;\n"
+    "void main() {\n"
+    "    vec2 pos = position * surface_size + surface_pos;\n"
+    "    vec2 normalized = (pos / screen_size) * 2.0 - 1.0;\n"
+    "    normalized.y = -normalized.y;\n"
+    "    gl_Position = vec4(normalized, 0.0, 1.0);\n"
+    "    v_texcoord = texcoord;\n"
+    "}\n";
+
+static const char* fragment_shader_source =
+    "precision mediump float;\n"
+    "varying vec2 v_texcoord;\n"
+    "uniform sampler2D texture0;\n"
+    "void main() {\n"
+    "    gl_FragColor = texture2D(texture0, v_texcoord);\n"
+    "}\n";
+
+static GLuint shader_program = 0;
+static GLint attr_position = -1;
+static GLint attr_texcoord = -1;
+static GLint uniform_screen_size = -1;
+static GLint uniform_surface_pos = -1;
+static GLint uniform_surface_size = -1;
+static GLint uniform_texture = -1;
+
+static GLuint quad_vbo = 0;
+
+static float quad_vertices[] = {
+    0.0f, 0.0f, 0.0f, 0.0f,
+    1.0f, 0.0f, 1.0f, 0.0f,
+    0.0f, 1.0f, 0.0f, 1.0f,
+    1.0f, 1.0f, 1.0f, 1.0f,
+};
+
+static GLuint compile_shader(GLenum type, const char* source) {
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, NULL);
+    glCompileShader(shader);
+
+    GLint status;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &status);
+    if (!status) {
+        char log[512];
+        glGetShaderInfoLog(shader, sizeof(log), NULL, log);
+        fprintf(stderr, "owl: shader compile error: %s\n", log);
+        glDeleteShader(shader);
+        return 0;
+    }
+
+    return shader;
+}
+
+static bool init_shaders(void) {
+    GLuint vertex_shader = compile_shader(GL_VERTEX_SHADER, vertex_shader_source);
+    if (!vertex_shader) {
+        return false;
+    }
+
+    GLuint fragment_shader = compile_shader(GL_FRAGMENT_SHADER, fragment_shader_source);
+    if (!fragment_shader) {
+        glDeleteShader(vertex_shader);
+        return false;
+    }
+
+    shader_program = glCreateProgram();
+    glAttachShader(shader_program, vertex_shader);
+    glAttachShader(shader_program, fragment_shader);
+    glLinkProgram(shader_program);
+
+    glDeleteShader(vertex_shader);
+    glDeleteShader(fragment_shader);
+
+    GLint status;
+    glGetProgramiv(shader_program, GL_LINK_STATUS, &status);
+    if (!status) {
+        char log[512];
+        glGetProgramInfoLog(shader_program, sizeof(log), NULL, log);
+        fprintf(stderr, "owl: shader link error: %s\n", log);
+        glDeleteProgram(shader_program);
+        shader_program = 0;
+        return false;
+    }
+
+    attr_position = glGetAttribLocation(shader_program, "position");
+    attr_texcoord = glGetAttribLocation(shader_program, "texcoord");
+    uniform_screen_size = glGetUniformLocation(shader_program, "screen_size");
+    uniform_surface_pos = glGetUniformLocation(shader_program, "surface_pos");
+    uniform_surface_size = glGetUniformLocation(shader_program, "surface_size");
+    uniform_texture = glGetUniformLocation(shader_program, "texture0");
+
+    glGenBuffers(1, &quad_vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, quad_vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(quad_vertices), quad_vertices, GL_STATIC_DRAW);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+
+    fprintf(stderr, "owl: shaders initialized\n");
+    return true;
+}
 
 static uint32_t get_framebuffer_for_bo(Owl_Display* display, struct gbm_bo* bo) {
     uint32_t* fb_id_ptr = gbm_bo_get_user_data(bo);
@@ -35,12 +144,106 @@ static uint32_t get_framebuffer_for_bo(Owl_Display* display, struct gbm_bo* bo) 
     return *fb_id;
 }
 
+static uint32_t get_time_ms(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint32_t)(ts.tv_sec * 1000 + ts.tv_nsec / 1000000);
+}
+
 void owl_render_init(Owl_Display* display) {
-    (void)display;
+    if (!eglMakeCurrent(display->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, display->egl_context)) {
+        fprintf(stderr, "owl: failed to make EGL context current for init\n");
+        return;
+    }
+
+    if (!init_shaders()) {
+        fprintf(stderr, "owl: failed to initialize shaders\n");
+    }
 }
 
 void owl_render_cleanup(Owl_Display* display) {
     (void)display;
+
+    if (quad_vbo) {
+        glDeleteBuffers(1, &quad_vbo);
+        quad_vbo = 0;
+    }
+
+    if (shader_program) {
+        glDeleteProgram(shader_program);
+        shader_program = 0;
+    }
+}
+
+uint32_t owl_render_upload_texture(Owl_Display* display, Owl_Surface* surface) {
+    if (!surface || !surface->current.buffer) {
+        return 0;
+    }
+
+    Owl_Shm_Buffer* buffer = surface->current.buffer;
+    Owl_Shm_Pool* pool = buffer->pool;
+
+    if (!pool || !pool->data) {
+        return 0;
+    }
+
+    if (!eglMakeCurrent(display->egl_display, EGL_NO_SURFACE, EGL_NO_SURFACE, display->egl_context)) {
+        return 0;
+    }
+
+    if (surface->texture_id == 0) {
+        glGenTextures(1, &surface->texture_id);
+    }
+
+    glBindTexture(GL_TEXTURE_2D, surface->texture_id);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+    void* pixels = (char*)pool->data + buffer->offset;
+
+    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, buffer->width, buffer->height,
+                 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+
+    surface->texture_width = buffer->width;
+    surface->texture_height = buffer->height;
+
+    glBindTexture(GL_TEXTURE_2D, 0);
+
+    wl_buffer_send_release(buffer->resource);
+
+    return surface->texture_id;
+}
+
+void owl_render_surface(Owl_Display* display, Owl_Surface* surface, int x, int y) {
+    (void)display;
+
+    if (!surface || surface->texture_id == 0) {
+        return;
+    }
+
+    glUseProgram(shader_program);
+
+    glUniform2f(uniform_surface_pos, (float)x, (float)y);
+    glUniform2f(uniform_surface_size, (float)surface->texture_width, (float)surface->texture_height);
+
+    glActiveTexture(GL_TEXTURE0);
+    glBindTexture(GL_TEXTURE_2D, surface->texture_id);
+    glUniform1i(uniform_texture, 0);
+
+    glBindBuffer(GL_ARRAY_BUFFER, quad_vbo);
+    glEnableVertexAttribArray(attr_position);
+    glEnableVertexAttribArray(attr_texcoord);
+    glVertexAttribPointer(attr_position, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glVertexAttribPointer(attr_texcoord, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+
+    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+    glDisableVertexAttribArray(attr_position);
+    glDisableVertexAttribArray(attr_texcoord);
+    glBindBuffer(GL_ARRAY_BUFFER, 0);
+    glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 void owl_render_frame(Owl_Display* display, Owl_Output* output) {
@@ -61,6 +264,20 @@ void owl_render_frame(Owl_Display* display, Owl_Output* output) {
     glViewport(0, 0, output->width, output->height);
     glClearColor(0.2f, 0.2f, 0.3f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT);
+
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+
+    glUniform2f(uniform_screen_size, (float)output->width, (float)output->height);
+
+    Owl_Window* window;
+    wl_list_for_each_reverse(window, &display->windows, link) {
+        if (window->mapped && window->surface && window->surface->has_content) {
+            owl_render_surface(display, window->surface, window->pos_x, window->pos_y);
+        }
+    }
+
+    glDisable(GL_BLEND);
 
     if (!eglSwapBuffers(display->egl_display, output->egl_surface)) {
         fprintf(stderr, "owl: failed to swap buffers\n");
@@ -88,6 +305,8 @@ void owl_render_frame(Owl_Display* display, Owl_Output* output) {
             return;
         }
         output->current_bo = bo;
+
+        owl_surface_send_frame_done(display, get_time_ms());
         return;
     }
 
@@ -101,4 +320,6 @@ void owl_render_frame(Owl_Display* display, Owl_Output* output) {
 
     output->next_bo = bo;
     output->page_flip_pending = true;
+
+    owl_surface_send_frame_done(display, get_time_ms());
 }

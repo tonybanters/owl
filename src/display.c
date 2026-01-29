@@ -192,6 +192,8 @@ Owl_Display* owl_display_create(void) {
 
     owl_output_init(display);
     owl_input_init(display);
+    owl_surface_init(display);
+    owl_xdg_shell_init(display);
     owl_render_init(display);
 
     display->running = false;
@@ -205,6 +207,8 @@ void owl_display_destroy(Owl_Display* display) {
     }
 
     owl_render_cleanup(display);
+    owl_xdg_shell_cleanup(display);
+    owl_surface_cleanup(display);
     owl_input_cleanup(display);
     owl_output_cleanup(display);
 
