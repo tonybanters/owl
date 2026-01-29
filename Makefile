@@ -26,6 +26,9 @@ $(PROTO_DIR)/%-protocol.h: $(PROTO_DIR)/%.xml
 $(PROTO_DIR)/%-protocol.c: $(PROTO_DIR)/%.xml
 	wayland-scanner private-code $< $@
 
+$(PROTO_DIR)/%-client-protocol.h: $(PROTO_DIR)/%.xml
+	wayland-scanner client-header $< $@
+
 $(LIBRARY): $(PROTO_HEADERS) $(PROTO_CODE) $(OBJECTS) | $(LIB_DIR)
 	ar rcs $@ $(OBJECTS)
 
@@ -40,6 +43,12 @@ $(LIB_DIR):
 
 examples: $(LIBRARY)
 	$(CC) $(CFLAGS) examples/simple_wm.c -L$(LIB_DIR) -lowl $(LDFLAGS) -o examples/simple_wm
+
+$(PROTO_DIR)/xdg-shell-client-protocol.c: $(PROTO_DIR)/xdg-shell.xml
+	wayland-scanner private-code $< $@
+
+test_client: $(PROTO_DIR)/xdg-shell-client-protocol.h $(PROTO_DIR)/xdg-shell-client-protocol.c
+	$(CC) -Wall -Wextra -std=c11 -I $(PROTO_DIR) $(shell pkg-config --cflags wayland-client) examples/test_client.c $(PROTO_DIR)/xdg-shell-client-protocol.c $(shell pkg-config --libs wayland-client) -o examples/test_client
 
 run: examples
 	./examples/simple_wm

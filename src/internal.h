@@ -28,6 +28,7 @@ struct Owl_Output {
     struct gbm_bo* current_bo;
     struct gbm_bo* next_bo;
     bool page_flip_pending;
+    struct wl_global* wl_output_global;
 };
 
 typedef struct Owl_Shm_Pool {
@@ -152,6 +153,8 @@ struct Owl_Display {
     int surface_count;
     struct wl_global* compositor_global;
     struct wl_global* shm_global;
+    struct wl_global* subcompositor_global;
+    struct wl_global* data_device_manager_global;
 
     Window_Callback_Entry window_callbacks[8][OWL_MAX_CALLBACKS];
     int window_callback_count[8];
@@ -164,6 +167,16 @@ struct Owl_Display {
 
     struct wl_event_source* drm_event_source;
     struct wl_event_source* libinput_event_source;
+
+    struct wl_global* seat_global;
+    struct wl_list keyboards;
+    struct wl_list pointers;
+    Owl_Surface* keyboard_focus;
+    Owl_Surface* pointer_focus;
+    double pointer_x;
+    double pointer_y;
+    int keymap_fd;
+    uint32_t keymap_size;
 };
 
 void owl_output_init(Owl_Display* display);
@@ -192,6 +205,15 @@ void owl_xdg_shell_cleanup(Owl_Display* display);
 void owl_xdg_toplevel_send_configure(Owl_Window* window, int width, int height);
 void owl_xdg_toplevel_send_close(Owl_Window* window);
 void owl_window_map(Owl_Window* window);
+
+void owl_seat_init(Owl_Display* display);
+void owl_seat_cleanup(Owl_Display* display);
+void owl_seat_set_keyboard_focus(Owl_Display* display, Owl_Surface* surface);
+void owl_seat_set_pointer_focus(Owl_Display* display, Owl_Surface* surface, double x, double y);
+void owl_seat_send_key(Owl_Display* display, uint32_t key, uint32_t state);
+void owl_seat_send_modifiers(Owl_Display* display);
+void owl_seat_send_pointer_motion(Owl_Display* display, double x, double y);
+void owl_seat_send_pointer_button(Owl_Display* display, uint32_t button, uint32_t state);
 
 uint32_t owl_render_upload_texture(Owl_Display* display, Owl_Surface* surface);
 void owl_render_surface(Owl_Display* display, Owl_Surface* surface, int x, int y);

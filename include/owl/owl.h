@@ -42,6 +42,7 @@ Owl_Display* owl_display_create(void);
 void owl_display_destroy(Owl_Display* display);
 void owl_display_run(Owl_Display* display);
 void owl_display_terminate(Owl_Display* display);
+const char* owl_display_get_socket_name(Owl_Display* display);
 
 Owl_Window** owl_get_windows(Owl_Display* display, int* count);
 void owl_window_focus(Owl_Window* window);

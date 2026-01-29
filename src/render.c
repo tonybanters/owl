@@ -2,6 +2,7 @@
 #include "internal.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <time.h>
 #include <EGL/egl.h>
@@ -10,6 +11,18 @@
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <wayland-server-protocol.h>
+
+static FILE* render_log = NULL;
+static void render_debug(const char* fmt, ...) {
+    if (!render_log) render_log = fopen("/tmp/owl_render.log", "w");
+    if (render_log) {
+        va_list args;
+        va_start(args, fmt);
+        vfprintf(render_log, fmt, args);
+        va_end(args);
+        fflush(render_log);
+    }
+}
 
 static const char* vertex_shader_source =
     "attribute vec2 position;\n"
@@ -248,12 +261,15 @@ void owl_render_surface(Owl_Display* display, Owl_Surface* surface, int x, int y
 
 void owl_render_frame(Owl_Display* display, Owl_Output* output) {
     if (!display || !output) {
+        render_debug("render_frame: null display or output\n");
         return;
     }
 
     if (output->page_flip_pending) {
+        render_debug("render_frame: page_flip_pending, skipping\n");
         return;
     }
+    render_debug("render_frame: starting\n");
 
     if (!eglMakeCurrent(display->egl_display, output->egl_surface,
                         output->egl_surface, display->egl_context)) {
@@ -268,14 +284,27 @@ void owl_render_frame(Owl_Display* display, Owl_Output* output) {
     glEnable(GL_BLEND);
     glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
 
+    glUseProgram(shader_program);
     glUniform2f(uniform_screen_size, (float)output->width, (float)output->height);
 
+    int window_count = 0;
+    int rendered_count = 0;
     Owl_Window* window;
     wl_list_for_each_reverse(window, &display->windows, link) {
+        window_count++;
+        render_debug("  window %p: mapped=%d surface=%p has_content=%d\n",
+                     (void*)window, window->mapped,
+                     (void*)window->surface,
+                     window->surface ? window->surface->has_content : 0);
         if (window->mapped && window->surface && window->surface->has_content) {
+            render_debug("    rendering at %d,%d size=%dx%d\n",
+                         window->pos_x, window->pos_y,
+                         window->surface->texture_width, window->surface->texture_height);
             owl_render_surface(display, window->surface, window->pos_x, window->pos_y);
+            rendered_count++;
         }
     }
+    render_debug("render_frame: windows=%d rendered=%d\n", window_count, rendered_count);
 
     glDisable(GL_BLEND);
 

@@ -3,10 +3,23 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #include <wayland-server-core.h>
 #include <wayland-server-protocol.h>
+
+static FILE* surf_log = NULL;
+static void surf_debug(const char* fmt, ...) {
+    if (!surf_log) surf_log = fopen("/tmp/owl_surface.log", "w");
+    if (surf_log) {
+        va_list args;
+        va_start(args, fmt);
+        vfprintf(surf_log, fmt, args);
+        va_end(args);
+        fflush(surf_log);
+    }
+}
 
 static void shm_pool_destroy_handler(struct wl_resource* resource) {
     Owl_Shm_Pool* pool = wl_resource_get_user_data(resource);
@@ -319,12 +332,15 @@ static Owl_Window* find_window_for_surface(Owl_Display* display, Owl_Surface* su
 
 static void surface_commit(struct wl_client* client, struct wl_resource* resource) {
     (void)client;
+    surf_debug("surface_commit called\n");
     Owl_Surface* surface = wl_resource_get_user_data(resource);
     if (!surface) {
+        surf_debug("  surface is NULL\n");
         return;
     }
 
     if (surface->pending.buffer_attached) {
+        surf_debug("  attaching buffer\n");
         surface->current.buffer = surface->pending.buffer;
         surface->current.buffer_x = surface->pending.buffer_x;
         surface->current.buffer_y = surface->pending.buffer_y;
@@ -332,6 +348,7 @@ static void surface_commit(struct wl_client* client, struct wl_resource* resourc
     }
 
     if (surface->pending.has_damage) {
+        surf_debug("  has damage\n");
         surface->current.damage_x = surface->pending.damage_x;
         surface->current.damage_y = surface->pending.damage_y;
         surface->current.damage_width = surface->pending.damage_width;
@@ -344,21 +361,30 @@ static void surface_commit(struct wl_client* client, struct wl_resource* resourc
     wl_list_init(&surface->pending.frame_callbacks);
 
     if (surface->current.buffer) {
+        surf_debug("  uploading texture\n");
         owl_render_upload_texture(surface->display, surface);
+        surf_debug("  texture uploaded\n");
         surface->has_content = true;
 
         Owl_Window* window = find_window_for_surface(surface->display, surface);
+        surf_debug("  window=%p\n", (void*)window);
         if (window && window->xdg_toplevel_resource && !window->mapped) {
+            surf_debug("  mapping window\n");
             if (window->width == 0 && window->height == 0) {
                 window->width = surface->texture_width;
                 window->height = surface->texture_height;
             }
             owl_window_map(window);
+            surf_debug("  window mapped\n");
         }
 
+        surf_debug("  rendering frames\n");
         for (int index = 0; index < surface->display->output_count; index++) {
             owl_render_frame(surface->display, surface->display->outputs[index]);
         }
+        surf_debug("  frames rendered\n");
+    } else {
+        surf_debug("  no buffer\n");
     }
 }
 
@@ -497,6 +523,227 @@ static void compositor_bind(struct wl_client* client, void* data, uint32_t versi
     wl_resource_set_implementation(resource, &compositor_interface, display, NULL);
 }
 
+static void subsurface_destroy(struct wl_client* client, struct wl_resource* resource) {
+    (void)client;
+    wl_resource_destroy(resource);
+}
+
+static void subsurface_set_position(struct wl_client* client, struct wl_resource* resource,
+                                    int32_t x, int32_t y) {
+    (void)client;
+    (void)resource;
+    (void)x;
+    (void)y;
+}
+
+static void subsurface_place_above(struct wl_client* client, struct wl_resource* resource,
+                                   struct wl_resource* sibling) {
+    (void)client;
+    (void)resource;
+    (void)sibling;
+}
+
+static void subsurface_place_below(struct wl_client* client, struct wl_resource* resource,
+                                   struct wl_resource* sibling) {
+    (void)client;
+    (void)resource;
+    (void)sibling;
+}
+
+static void subsurface_set_sync(struct wl_client* client, struct wl_resource* resource) {
+    (void)client;
+    (void)resource;
+}
+
+static void subsurface_set_desync(struct wl_client* client, struct wl_resource* resource) {
+    (void)client;
+    (void)resource;
+}
+
+static const struct wl_subsurface_interface subsurface_interface = {
+    .destroy = subsurface_destroy,
+    .set_position = subsurface_set_position,
+    .place_above = subsurface_place_above,
+    .place_below = subsurface_place_below,
+    .set_sync = subsurface_set_sync,
+    .set_desync = subsurface_set_desync,
+};
+
+static void subcompositor_destroy(struct wl_client* client, struct wl_resource* resource) {
+    (void)client;
+    wl_resource_destroy(resource);
+}
+
+static void subcompositor_get_subsurface(struct wl_client* client, struct wl_resource* resource,
+                                         uint32_t id, struct wl_resource* surface_resource,
+                                         struct wl_resource* parent_resource) {
+    (void)surface_resource;
+    (void)parent_resource;
+
+    struct wl_resource* subsurface_resource = wl_resource_create(client, &wl_subsurface_interface, 1, id);
+    if (!subsurface_resource) {
+        wl_resource_post_no_memory(resource);
+        return;
+    }
+
+    wl_resource_set_implementation(subsurface_resource, &subsurface_interface, NULL, NULL);
+}
+
+static const struct wl_subcompositor_interface subcompositor_interface = {
+    .destroy = subcompositor_destroy,
+    .get_subsurface = subcompositor_get_subsurface,
+};
+
+static void subcompositor_bind(struct wl_client* client, void* data, uint32_t version, uint32_t id) {
+    (void)data;
+    (void)version;
+
+    struct wl_resource* resource = wl_resource_create(client, &wl_subcompositor_interface, 1, id);
+    if (!resource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+
+    wl_resource_set_implementation(resource, &subcompositor_interface, NULL, NULL);
+}
+
+static void data_offer_destroy(struct wl_client* client, struct wl_resource* resource) {
+    (void)client;
+    wl_resource_destroy(resource);
+}
+
+static void data_offer_accept(struct wl_client* client, struct wl_resource* resource,
+                              uint32_t serial, const char* mime_type) {
+    (void)client;
+    (void)resource;
+    (void)serial;
+    (void)mime_type;
+}
+
+static void data_offer_receive(struct wl_client* client, struct wl_resource* resource,
+                               const char* mime_type, int32_t fd) {
+    (void)client;
+    (void)resource;
+    (void)mime_type;
+    close(fd);
+}
+
+static void data_offer_finish(struct wl_client* client, struct wl_resource* resource) {
+    (void)client;
+    (void)resource;
+}
+
+static void data_offer_set_actions(struct wl_client* client, struct wl_resource* resource,
+                                   uint32_t dnd_actions, uint32_t preferred_action) {
+    (void)client;
+    (void)resource;
+    (void)dnd_actions;
+    (void)preferred_action;
+}
+
+static const struct wl_data_offer_interface data_offer_interface = {
+    .accept = data_offer_accept,
+    .receive = data_offer_receive,
+    .destroy = data_offer_destroy,
+    .finish = data_offer_finish,
+    .set_actions = data_offer_set_actions,
+};
+
+static void data_source_destroy(struct wl_client* client, struct wl_resource* resource) {
+    (void)client;
+    wl_resource_destroy(resource);
+}
+
+static void data_source_offer(struct wl_client* client, struct wl_resource* resource,
+                              const char* mime_type) {
+    (void)client;
+    (void)resource;
+    (void)mime_type;
+}
+
+static void data_source_set_actions(struct wl_client* client, struct wl_resource* resource,
+                                    uint32_t dnd_actions) {
+    (void)client;
+    (void)resource;
+    (void)dnd_actions;
+}
+
+static const struct wl_data_source_interface data_source_interface = {
+    .offer = data_source_offer,
+    .destroy = data_source_destroy,
+    .set_actions = data_source_set_actions,
+};
+
+static void data_device_start_drag(struct wl_client* client, struct wl_resource* resource,
+                                   struct wl_resource* source, struct wl_resource* origin,
+                                   struct wl_resource* icon, uint32_t serial) {
+    (void)client;
+    (void)resource;
+    (void)source;
+    (void)origin;
+    (void)icon;
+    (void)serial;
+}
+
+static void data_device_set_selection(struct wl_client* client, struct wl_resource* resource,
+                                      struct wl_resource* source, uint32_t serial) {
+    (void)client;
+    (void)resource;
+    (void)source;
+    (void)serial;
+}
+
+static void data_device_release(struct wl_client* client, struct wl_resource* resource) {
+    (void)client;
+    wl_resource_destroy(resource);
+}
+
+static const struct wl_data_device_interface data_device_interface = {
+    .start_drag = data_device_start_drag,
+    .set_selection = data_device_set_selection,
+    .release = data_device_release,
+};
+
+static void data_device_manager_create_data_source(struct wl_client* client,
+                                                   struct wl_resource* resource, uint32_t id) {
+    struct wl_resource* source = wl_resource_create(client, &wl_data_source_interface, 3, id);
+    if (!source) {
+        wl_resource_post_no_memory(resource);
+        return;
+    }
+    wl_resource_set_implementation(source, &data_source_interface, NULL, NULL);
+}
+
+static void data_device_manager_get_data_device(struct wl_client* client,
+                                                struct wl_resource* resource,
+                                                uint32_t id, struct wl_resource* seat) {
+    (void)seat;
+    struct wl_resource* device = wl_resource_create(client, &wl_data_device_interface, 3, id);
+    if (!device) {
+        wl_resource_post_no_memory(resource);
+        return;
+    }
+    wl_resource_set_implementation(device, &data_device_interface, NULL, NULL);
+}
+
+static const struct wl_data_device_manager_interface data_device_manager_interface = {
+    .create_data_source = data_device_manager_create_data_source,
+    .get_data_device = data_device_manager_get_data_device,
+};
+
+static void data_device_manager_bind(struct wl_client* client, void* data,
+                                     uint32_t version, uint32_t id) {
+    (void)data;
+    uint32_t bound_version = version < 3 ? version : 3;
+    struct wl_resource* resource = wl_resource_create(client, &wl_data_device_manager_interface,
+                                                      bound_version, id);
+    if (!resource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+    wl_resource_set_implementation(resource, &data_device_manager_interface, NULL, NULL);
+}
+
 void owl_surface_init(Owl_Display* display) {
     wl_list_init(&display->surfaces);
 
@@ -516,6 +763,22 @@ void owl_surface_init(Owl_Display* display) {
         return;
     }
 
+    display->subcompositor_global = wl_global_create(display->wayland_display,
+        &wl_subcompositor_interface, 1, display, subcompositor_bind);
+
+    if (!display->subcompositor_global) {
+        fprintf(stderr, "owl: failed to create wl_subcompositor global\n");
+        return;
+    }
+
+    display->data_device_manager_global = wl_global_create(display->wayland_display,
+        &wl_data_device_manager_interface, 3, display, data_device_manager_bind);
+
+    if (!display->data_device_manager_global) {
+        fprintf(stderr, "owl: failed to create wl_data_device_manager global\n");
+        return;
+    }
+
     fprintf(stderr, "owl: surface protocol initialized\n");
 }
 
@@ -524,6 +787,16 @@ void owl_surface_cleanup(Owl_Display* display) {
     Owl_Surface* tmp;
     wl_list_for_each_safe(surface, tmp, &display->surfaces, link) {
         wl_resource_destroy(surface->resource);
+    }
+
+    if (display->data_device_manager_global) {
+        wl_global_destroy(display->data_device_manager_global);
+        display->data_device_manager_global = NULL;
+    }
+
+    if (display->subcompositor_global) {
+        wl_global_destroy(display->subcompositor_global);
+        display->subcompositor_global = NULL;
     }
 
     if (display->shm_global) {
@@ -598,6 +871,10 @@ void owl_window_focus(Owl_Window* window) {
 
     window->focused = true;
     owl_invoke_window_callback(window->display, OWL_WINDOW_EVENT_FOCUS, window);
+
+    if (window->surface) {
+        owl_seat_set_keyboard_focus(window->display, window->surface);
+    }
 }
 
 void owl_window_move(Owl_Window* window, int x, int y) {

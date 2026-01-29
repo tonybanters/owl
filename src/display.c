@@ -2,14 +2,51 @@
 #include "internal.h"
 #include <stdlib.h>
 #include <stdio.h>
+#include <stdarg.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <signal.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <gbm.h>
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
+
+static FILE* disp_log = NULL;
+static void disp_debug(const char* fmt, ...) {
+    if (!disp_log) disp_log = fopen("/tmp/owl_display.log", "w");
+    if (disp_log) {
+        va_list args;
+        va_start(args, fmt);
+        vfprintf(disp_log, fmt, args);
+        va_end(args);
+        fflush(disp_log);
+    }
+}
+
+static void client_destroyed(struct wl_listener* listener, void* data) {
+    (void)data;
+    disp_debug("client destroyed\n");
+    wl_list_remove(&listener->link);
+    free(listener);
+}
+
+static void client_created(struct wl_listener* listener, void* data) {
+    (void)listener;
+    struct wl_client* client = data;
+    disp_debug("client connected: %p\n", (void*)client);
+
+    struct wl_listener* destroy_listener = malloc(sizeof(struct wl_listener));
+    if (destroy_listener) {
+        destroy_listener->notify = client_destroyed;
+        wl_client_add_destroy_listener(client, destroy_listener);
+    }
+}
+
+static struct wl_listener client_created_listener = {
+    .notify = client_created,
+};
 
 static int open_drm_device(void) {
     const char* drm_paths[] = {
@@ -113,26 +150,39 @@ static bool init_egl(Owl_Display* display) {
     return true;
 }
 
-static int handle_drm_event(int fd, uint32_t mask, void* data) {
-    (void)mask;
-    Owl_Display* display = data;
-    drmEventContext event_context = {
-        .version = 2,
-        .page_flip_handler = NULL,
-    };
-    drmHandleEvent(fd, &event_context);
+static void page_flip_handler(int fd, unsigned int sequence, unsigned int tv_sec,
+                              unsigned int tv_usec, void* user_data) {
+    (void)fd;
+    (void)sequence;
+    (void)tv_sec;
+    (void)tv_usec;
+    Owl_Output* output = user_data;
+    disp_debug("page_flip_handler: output=%p\n", (void*)output);
+    if (output) {
+        output->page_flip_pending = false;
+        if (output->current_bo) {
+            gbm_surface_release_buffer(output->gbm_surface, output->current_bo);
+        }
+        output->current_bo = output->next_bo;
+        output->next_bo = NULL;
 
-    for (int index = 0; index < display->output_count; index++) {
-        Owl_Output* output = display->outputs[index];
-        if (output && output->page_flip_pending) {
-            output->page_flip_pending = false;
-            if (output->current_bo) {
-                gbm_surface_release_buffer(output->gbm_surface, output->current_bo);
-            }
-            output->current_bo = output->next_bo;
-            output->next_bo = NULL;
+        if (output->display) {
+            disp_debug("page_flip_handler: triggering re-render\n");
+            owl_render_frame(output->display, output);
         }
     }
+}
+
+static int handle_drm_event(int fd, uint32_t mask, void* data) {
+    (void)mask;
+    (void)data;
+    disp_debug("handle_drm_event called\n");
+    drmEventContext event_context = {
+        .version = 2,
+        .page_flip_handler = page_flip_handler,
+    };
+    drmHandleEvent(fd, &event_context);
+    disp_debug("handle_drm_event done\n");
 
     return 0;
 }
@@ -192,9 +242,12 @@ Owl_Display* owl_display_create(void) {
 
     owl_output_init(display);
     owl_input_init(display);
+    owl_seat_init(display);
     owl_surface_init(display);
     owl_xdg_shell_init(display);
     owl_render_init(display);
+
+    wl_display_add_client_created_listener(display->wayland_display, &client_created_listener);
 
     display->running = false;
 
@@ -209,6 +262,7 @@ void owl_display_destroy(Owl_Display* display) {
     owl_render_cleanup(display);
     owl_xdg_shell_cleanup(display);
     owl_surface_cleanup(display);
+    owl_seat_cleanup(display);
     owl_input_cleanup(display);
     owl_output_cleanup(display);
 
@@ -263,4 +317,11 @@ void owl_display_terminate(Owl_Display* display) {
     }
 
     display->running = false;
+}
+
+const char* owl_display_get_socket_name(Owl_Display* display) {
+    if (!display) {
+        return NULL;
+    }
+    return display->socket_name;
 }

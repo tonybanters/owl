@@ -7,6 +7,49 @@
 #include <xf86drmMode.h>
 #include <gbm.h>
 #include <EGL/egl.h>
+#include <wayland-server-protocol.h>
+
+static void wl_output_release(struct wl_client* client, struct wl_resource* resource) {
+    (void)client;
+    wl_resource_destroy(resource);
+}
+
+static const struct wl_output_interface output_interface = {
+    .release = wl_output_release,
+};
+
+static void wl_output_bind(struct wl_client* client, void* data, uint32_t version, uint32_t id) {
+    Owl_Output* output = data;
+    uint32_t bound_version = version < 4 ? version : 4;
+
+    struct wl_resource* resource = wl_resource_create(client, &wl_output_interface, bound_version, id);
+    if (!resource) {
+        wl_client_post_no_memory(client);
+        return;
+    }
+
+    wl_resource_set_implementation(resource, &output_interface, output, NULL);
+
+    wl_output_send_geometry(resource,
+        output->pos_x, output->pos_y,
+        0, 0,
+        WL_OUTPUT_SUBPIXEL_UNKNOWN,
+        "owl", output->name,
+        WL_OUTPUT_TRANSFORM_NORMAL);
+
+    wl_output_send_mode(resource,
+        WL_OUTPUT_MODE_CURRENT | WL_OUTPUT_MODE_PREFERRED,
+        output->width, output->height,
+        output->drm_mode.vrefresh * 1000);
+
+    if (bound_version >= 2) {
+        wl_output_send_scale(resource, 1);
+    }
+
+    if (bound_version >= 2) {
+        wl_output_send_done(resource);
+    }
+}
 
 static Owl_Output* create_output(Owl_Display* display, drmModeConnector* connector,
                                   drmModeCrtc* crtc) {
@@ -65,6 +108,18 @@ static Owl_Output* create_output(Owl_Display* display, drmModeConnector* connect
         return NULL;
     }
 
+    output->wl_output_global = wl_global_create(display->wayland_display,
+        &wl_output_interface, 4, output, wl_output_bind);
+
+    if (!output->wl_output_global) {
+        fprintf(stderr, "owl: failed to create wl_output global for %s\n", output->name);
+        eglDestroySurface(display->egl_display, output->egl_surface);
+        gbm_surface_destroy(output->gbm_surface);
+        free(output->name);
+        free(output);
+        return NULL;
+    }
+
     fprintf(stderr, "owl: output %s: %dx%d\n", output->name, output->width, output->height);
 
     return output;
@@ -73,6 +128,10 @@ static Owl_Output* create_output(Owl_Display* display, drmModeConnector* connect
 static void destroy_output(Owl_Output* output) {
     if (!output) {
         return;
+    }
+
+    if (output->wl_output_global) {
+        wl_global_destroy(output->wl_output_global);
     }
 
     if (output->current_bo) {
