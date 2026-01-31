@@ -866,11 +866,13 @@ void owl_window_focus(Owl_Window* window) {
         if (other->focused && other != window) {
             other->focused = false;
             owl_invoke_window_callback(window->display, OWL_WINDOW_EVENT_UNFOCUS, other);
+            owl_xdg_toplevel_send_configure(other, other->width, other->height);
         }
     }
 
     window->focused = true;
     owl_invoke_window_callback(window->display, OWL_WINDOW_EVENT_FOCUS, window);
+    owl_xdg_toplevel_send_configure(window, window->width, window->height);
 
     if (window->surface) {
         owl_seat_set_keyboard_focus(window->display, window->surface);
