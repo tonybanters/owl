@@ -7,10 +7,19 @@
 #include <time.h>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
+#include <GLES2/gl2ext.h>
 #include <gbm.h>
 #include <xf86drm.h>
 #include <xf86drmMode.h>
 #include <wayland-server-protocol.h>
+
+#ifndef GL_BGRA_EXT
+#define GL_BGRA_EXT 0x80E1
+#endif
+
+#ifndef GL_UNPACK_ROW_LENGTH_EXT
+#define GL_UNPACK_ROW_LENGTH_EXT 0x0CF2
+#endif
 
 static FILE* render_log = NULL;
 static void render_debug(const char* fmt, ...) {
@@ -216,8 +225,10 @@ uint32_t owl_render_upload_texture(Owl_Display* display, Owl_Surface* surface) {
 
     void* pixels = (char*)pool->data + buffer->offset;
 
+    glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, buffer->stride / 4);
     glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, buffer->width, buffer->height,
-                 0, GL_RGBA, GL_UNSIGNED_BYTE, pixels);
+                 0, GL_BGRA_EXT, GL_UNSIGNED_BYTE, pixels);
+    glPixelStorei(GL_UNPACK_ROW_LENGTH_EXT, 0);
 
     surface->texture_width = buffer->width;
     surface->texture_height = buffer->height;
