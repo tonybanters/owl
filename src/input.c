@@ -33,6 +33,7 @@ typedef struct Owl_Keyboard {
 typedef struct Owl_Pointer {
     struct wl_resource* resource;
     struct wl_list link;
+    Owl_Display* display;
 } Owl_Pointer;
 
 static uint32_t get_time_ms(void) {
@@ -118,6 +119,34 @@ static void handle_keyboard_key(Owl_Display* display, struct libinput_event_keyb
     owl_seat_send_modifiers(display);
 }
 
+static Owl_Window* find_window_at(Owl_Display* display, int x, int y) {
+    Owl_Window* window;
+    wl_list_for_each(window, &display->windows, link) {
+        if (!window->mapped) {
+            continue;
+        }
+        if (x >= window->pos_x && x < window->pos_x + window->width &&
+            y >= window->pos_y && y < window->pos_y + window->height) {
+            return window;
+        }
+    }
+    return NULL;
+}
+
+static void update_pointer_focus(Owl_Display* display) {
+    int px = (int)display->pointer_x;
+    int py = (int)display->pointer_y;
+
+    Owl_Window* window = find_window_at(display, px, py);
+    Owl_Surface* surface = window ? window->surface : NULL;
+
+    if (surface != display->pointer_focus) {
+        double local_x = px - (window ? window->pos_x : 0);
+        double local_y = py - (window ? window->pos_y : 0);
+        owl_seat_set_pointer_focus(display, surface, local_x, local_y);
+    }
+}
+
 static void handle_pointer_motion(Owl_Display* display, struct libinput_event_pointer* event) {
     double dx = libinput_event_pointer_get_dx(event);
     double dy = libinput_event_pointer_get_dy(event);
@@ -133,6 +162,8 @@ static void handle_pointer_motion(Owl_Display* display, struct libinput_event_po
         if (display->pointer_y >= output->height) display->pointer_y = output->height - 1;
     }
 
+    update_pointer_focus(display);
+
     struct Owl_Input input = {
         .keycode = 0,
         .keysym = 0,
@@ -143,7 +174,13 @@ static void handle_pointer_motion(Owl_Display* display, struct libinput_event_po
     };
 
     owl_invoke_input_callback(display, OWL_INPUT_POINTER_MOTION, &input);
-    owl_seat_send_pointer_motion(display, display->pointer_x, display->pointer_y);
+
+    Owl_Window* focused_window = find_window_at(display, (int)display->pointer_x, (int)display->pointer_y);
+    if (focused_window) {
+        double local_x = display->pointer_x - focused_window->pos_x;
+        double local_y = display->pointer_y - focused_window->pos_y;
+        owl_seat_send_pointer_motion(display, local_x, local_y);
+    }
 }
 
 static void handle_pointer_button(Owl_Display* display, struct libinput_event_pointer* event) {
@@ -359,14 +396,40 @@ static void keyboard_destroy_handler(struct wl_resource* resource) {
 }
 
 static void pointer_set_cursor(struct wl_client* client, struct wl_resource* resource,
-                               uint32_t serial, struct wl_resource* surface,
+                               uint32_t serial, struct wl_resource* surface_resource,
                                int32_t hotspot_x, int32_t hotspot_y) {
     (void)client;
-    (void)resource;
     (void)serial;
-    (void)surface;
-    (void)hotspot_x;
-    (void)hotspot_y;
+
+    input_debug("pointer_set_cursor: surface_resource=%p hotspot=%d,%d\n",
+                (void*)surface_resource, hotspot_x, hotspot_y);
+
+    Owl_Pointer* pointer = wl_resource_get_user_data(resource);
+    if (!pointer || !pointer->display) {
+        input_debug("  no pointer or display\n");
+        return;
+    }
+
+    Owl_Display* display = pointer->display;
+
+    if (!surface_resource) {
+        input_debug("  hiding cursor\n");
+        display->cursor_surface = NULL;
+        return;
+    }
+
+    Owl_Surface* cursor_surface = owl_surface_from_resource(surface_resource);
+    if (!cursor_surface) {
+        input_debug("  cursor surface not found\n");
+        return;
+    }
+
+    input_debug("  cursor surface=%p has_content=%d\n",
+                (void*)cursor_surface, cursor_surface->has_content);
+
+    display->cursor_surface = cursor_surface;
+    display->cursor_hotspot_x = hotspot_x;
+    display->cursor_hotspot_y = hotspot_y;
 }
 
 static void pointer_release(struct wl_client* client, struct wl_resource* resource) {
@@ -389,6 +452,7 @@ static void pointer_destroy_handler(struct wl_resource* resource) {
 
 static void seat_get_pointer(struct wl_client* client, struct wl_resource* resource, uint32_t id) {
     Owl_Display* display = wl_resource_get_user_data(resource);
+    input_debug("seat_get_pointer: client=%p id=%u\n", (void*)client, id);
 
     Owl_Pointer* pointer = calloc(1, sizeof(Owl_Pointer));
     if (!pointer) {
@@ -404,6 +468,7 @@ static void seat_get_pointer(struct wl_client* client, struct wl_resource* resou
         return;
     }
 
+    pointer->display = display;
     wl_resource_set_implementation(pointer->resource, &pointer_interface, pointer, pointer_destroy_handler);
     wl_list_insert(&display->pointers, &pointer->link);
 }

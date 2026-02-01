@@ -317,6 +317,13 @@ void owl_render_frame(Owl_Display* display, Owl_Output* output) {
     }
     render_debug("render_frame: windows=%d rendered=%d\n", window_count, rendered_count);
 
+    if (display->cursor_surface && display->cursor_surface->has_content) {
+        int cursor_x = (int)display->pointer_x - display->cursor_hotspot_x;
+        int cursor_y = (int)display->pointer_y - display->cursor_hotspot_y;
+        owl_render_surface(display, display->cursor_surface, cursor_x, cursor_y);
+        render_debug("render_frame: cursor at %d,%d\n", cursor_x, cursor_y);
+    }
+
     glDisable(GL_BLEND);
 
     if (!eglSwapBuffers(display->egl_display, output->egl_surface)) {

@@ -240,6 +240,10 @@ static void surface_destroy_handler(struct wl_resource* resource) {
         return;
     }
 
+    if (surface->display->cursor_surface == surface) {
+        surface->display->cursor_surface = NULL;
+    }
+
     wl_list_remove(&surface->link);
     surface->display->surface_count--;
 

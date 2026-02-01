@@ -177,6 +177,10 @@ struct Owl_Display {
     double pointer_y;
     int keymap_fd;
     uint32_t keymap_size;
+
+    Owl_Surface* cursor_surface;
+    int32_t cursor_hotspot_x;
+    int32_t cursor_hotspot_y;
 };
 
 void owl_output_init(Owl_Display* display);
