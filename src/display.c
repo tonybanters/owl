@@ -325,3 +325,11 @@ const char* owl_display_get_socket_name(Owl_Display* display) {
     }
     return display->socket_name;
 }
+
+int owl_display_get_pointer_x(Owl_Display* display) {
+    return display ? (int)display->pointer_x : 0;
+}
+
+int owl_display_get_pointer_y(Owl_Display* display) {
+    return display ? (int)display->pointer_y : 0;
+}

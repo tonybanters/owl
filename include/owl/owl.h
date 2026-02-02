@@ -12,12 +12,16 @@ typedef struct Owl_Input Owl_Input;
 typedef enum {
     OWL_WINDOW_EVENT_CREATE,
     OWL_WINDOW_EVENT_DESTROY,
+    OWL_WINDOW_EVENT_MAP,
+    OWL_WINDOW_EVENT_UNMAP,
     OWL_WINDOW_EVENT_FOCUS,
     OWL_WINDOW_EVENT_UNFOCUS,
     OWL_WINDOW_EVENT_MOVE,
     OWL_WINDOW_EVENT_RESIZE,
     OWL_WINDOW_EVENT_FULLSCREEN,
     OWL_WINDOW_EVENT_TITLE_CHANGE,
+    OWL_WINDOW_EVENT_REQUEST_MOVE,
+    OWL_WINDOW_EVENT_REQUEST_RESIZE,
 } Owl_Window_Event;
 
 typedef enum {
@@ -43,6 +47,8 @@ void owl_display_destroy(Owl_Display* display);
 void owl_display_run(Owl_Display* display);
 void owl_display_terminate(Owl_Display* display);
 const char* owl_display_get_socket_name(Owl_Display* display);
+int owl_display_get_pointer_x(Owl_Display* display);
+int owl_display_get_pointer_y(Owl_Display* display);
 
 Owl_Window** owl_get_windows(Owl_Display* display, int* count);
 void owl_window_focus(Owl_Window* window);

@@ -6,7 +6,7 @@ void owl_set_window_callback(
         Owl_Window_Callback callback,
         void* data
     ) {
-    if (!display || type < 0 || type > OWL_WINDOW_EVENT_TITLE_CHANGE) {
+    if (!display || type < 0 || type > OWL_WINDOW_EVENT_REQUEST_RESIZE) {
         return;
     }
 
@@ -61,7 +61,7 @@ void owl_set_output_callback(
 }
 
 void owl_invoke_window_callback(Owl_Display* display, Owl_Window_Event type, Owl_Window* window) {
-    if (!display || type < 0 || type > OWL_WINDOW_EVENT_TITLE_CHANGE) {
+    if (!display || type < 0 || type > OWL_WINDOW_EVENT_REQUEST_RESIZE) {
         return;
     }
 
