@@ -243,6 +243,12 @@ static void surface_destroy_handler(struct wl_resource* resource) {
     if (surface->display->cursor_surface == surface) {
         surface->display->cursor_surface = NULL;
     }
+    if (surface->display->keyboard_focus == surface) {
+        surface->display->keyboard_focus = NULL;
+    }
+    if (surface->display->pointer_focus == surface) {
+        surface->display->pointer_focus = NULL;
+    }
 
     wl_list_remove(&surface->link);
     surface->display->surface_count--;
