@@ -156,8 +156,8 @@ struct Owl_Display {
     struct wl_global* subcompositor_global;
     struct wl_global* data_device_manager_global;
 
-    Window_Callback_Entry window_callbacks[8][OWL_MAX_CALLBACKS];
-    int window_callback_count[8];
+    Window_Callback_Entry window_callbacks[12][OWL_MAX_CALLBACKS];
+    int window_callback_count[12];
 
     Input_Callback_Entry input_callbacks[5][OWL_MAX_CALLBACKS];
     int input_callback_count[5];
