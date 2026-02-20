@@ -902,8 +902,7 @@ void owl_window_resize(Owl_Window* window, int width, int height) {
     if (!window) {
         return;
     }
-    window->width = width;
-    window->height = height;
+    owl_xdg_toplevel_send_configure(window, width, height);
     owl_invoke_window_callback(window->display, OWL_WINDOW_EVENT_RESIZE, window);
 }
 
